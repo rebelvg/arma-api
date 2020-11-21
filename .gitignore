@@ -1,0 +1,8 @@
+.vscode/
+.idea/
+node_modules/
+missions/
+verify/
+md5/
+config.ts
+*.pbo

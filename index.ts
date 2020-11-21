@@ -1,0 +1,229 @@
+import * as express from 'express';
+import * as fs from 'fs';
+import * as _ from 'lodash';
+import * as md5 from 'md5';
+import * as moment from 'moment';
+import * as path from 'path';
+import { promisify } from 'util';
+
+import { MAX_FILE_SIZE_MB, PORT, UPLOAD_TOKEN, VERIFY_CHECK } from './config';
+
+const app = express();
+
+app.set('trust proxy', true);
+
+const router = express.Router();
+
+if (!fs.existsSync('verify')) {
+  fs.mkdirSync('verify');
+}
+
+if (!fs.existsSync('missions')) {
+  fs.mkdirSync('missions');
+}
+
+if (!fs.existsSync('md5')) {
+  fs.mkdirSync('md5');
+}
+
+class Mission {
+  public missionName: string;
+  public islandName: string;
+
+  constructor(fileName) {
+    const missionName = fileName.split('.');
+
+    if (missionName.length !== 2)
+      throw new Error('bad_name: Example - mission_name.island.pbo');
+
+    this.missionName = _.first(missionName);
+    this.islandName = _.last(missionName);
+  }
+}
+
+router.post('/verify/:group', (req, res) => {
+  const groupName = req.params.group;
+  const groupPassword = _.get(req.headers, 'auth');
+  const hash = _.get(req.headers, 'hash') as string;
+
+  const groupObj = _.find(VERIFY_CHECK, { name: groupName });
+
+  if (!groupObj) {
+    throw new Error('bad_group_name');
+  }
+
+  if (groupObj.password !== groupPassword) {
+    throw new Error('bad_auth');
+  }
+
+  if (!hash) {
+    throw new Error('no_hash');
+  }
+
+  fs.writeFile(`verify/${groupName}`, hash, () => {
+    res.send(null);
+  });
+});
+
+router.get('/verify/:group', (req, res, next) => {
+  const groupName = req.params.group;
+
+  const groupObj = _.find(VERIFY_CHECK, { name: groupName });
+
+  if (!groupObj) {
+    throw new Error('bad_group_name');
+  }
+
+  fs.readFile(
+    `verify/${groupName}`,
+    {
+      encoding: 'utf8',
+    },
+    (err, file) => {
+      if (err) return next(err);
+
+      res.send(file);
+    },
+  );
+});
+
+router.post('/missions', async (req, res, next) => {
+  const uploadToken = _.get(req.headers, 'auth');
+  const fileSize = parseInt(_.get(req.headers, 'content-length', '0'));
+  let fileName = _.get(req.headers, 'filename') as string;
+
+  try {
+    if (uploadToken !== UPLOAD_TOKEN) {
+      throw new Error('bad_auth');
+    }
+
+    if (fileSize === 0) {
+      throw new Error('empty_file');
+    }
+
+    if (fileSize > MAX_FILE_SIZE_MB * 1024 * 1024) {
+      throw new Error('size_too_large');
+    }
+
+    if (!fileName) {
+      throw new Error('no_filename');
+    }
+
+    fileName = fileName.toLowerCase().replace(' ', '_');
+
+    if (fileName !== encodeURIComponent(fileName)) {
+      throw new Error('bad_filename_remove_special_chars');
+    }
+
+    const mission = new Mission(fileName);
+
+    const files = await promisify(fs.readdir)('missions');
+
+    await Promise.all(
+      files
+        .filter((fileName) =>
+          new RegExp(`klpq_${mission.missionName}-\\d+_\\d+..+.pbo`).test(
+            fileName,
+          ),
+        )
+        .map((fileName) => promisify(fs.unlink)(`missions/${fileName}`)),
+    );
+
+    const newMissionName = `klpq_${mission.missionName}-${moment().format(
+      'YYYYMMDD_HHmmss',
+    )}.${mission.islandName}.pbo`;
+
+    try {
+      const missionBuffer = await new Promise<Buffer>((resolve, reject) => {
+        const missionBuffers = [];
+
+        req.on('data', (data) => {
+          missionBuffers.push(data);
+        });
+
+        req.on('error', (error) => {
+          reject(error);
+        });
+
+        req.on('end', () => {
+          const missionBuffer = Buffer.concat(missionBuffers);
+
+          resolve(missionBuffer);
+        });
+      });
+
+      await promisify(fs.writeFile)(
+        `md5/${newMissionName}`,
+        md5(missionBuffer),
+      );
+
+      await promisify(fs.writeFile)(
+        `missions/${newMissionName}`,
+        missionBuffer,
+      );
+    } catch (error) {
+      console.error(error);
+
+      req.destroy();
+
+      return;
+    }
+
+    res.send(null);
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.get('/missions', async (req, res, next) => {
+  try {
+    const files = await promisify(fs.readdir)('missions');
+
+    const filesRes = await Promise.all(
+      files.map(async (file) => {
+        const hash = await promisify(fs.readFile)(`md5/${file}`, 'utf-8');
+
+        return {
+          file,
+          hash,
+        };
+      }),
+    );
+
+    res.json(filesRes);
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.get('/missions/:missionName', (req, res, next) => {
+  const missionName = req.params.missionName;
+
+  res.sendFile(path.resolve(`missions/${missionName}`));
+});
+
+app.use(router);
+
+app.use((req, res, next) => {
+  throw new Error('not_found');
+});
+
+app.use((err, req, res, next) => {
+  res.status(500).json({ error: err.stack.split('\n') });
+});
+
+//remove previous unix socket
+if (typeof PORT === 'string') {
+  if (fs.existsSync(PORT)) {
+    fs.unlinkSync(PORT);
+  }
+}
+
+app.listen(PORT, () => {
+  console.log('server_running');
+
+  //set unix socket rw rights for nginx
+  if (typeof PORT === 'string') {
+    fs.chmodSync(PORT, '777');
+  }
+});

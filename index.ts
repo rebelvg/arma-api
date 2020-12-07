@@ -6,6 +6,16 @@ import * as moment from 'moment';
 import * as path from 'path';
 import { promisify } from 'util';
 
+const VERIFY_DIR_PATH = path.resolve('verify');
+const MISSIONS_DIR_PATH = path.resolve('missions');
+const MD5_DIR_PATH = path.resolve('md5');
+
+for (const dirPath of [VERIFY_DIR_PATH, MISSIONS_DIR_PATH, MD5_DIR_PATH]) {
+  if (!fs.existsSync(dirPath)) {
+    fs.mkdirSync(dirPath);
+  }
+}
+
 import { MAX_FILE_SIZE_MB, PORT, UPLOAD_TOKEN, VERIFY_CHECK } from './config';
 
 const app = express();
@@ -14,18 +24,6 @@ app.set('trust proxy', true);
 
 const router = express.Router();
 
-if (!fs.existsSync('verify')) {
-  fs.mkdirSync('verify');
-}
-
-if (!fs.existsSync('missions')) {
-  fs.mkdirSync('missions');
-}
-
-if (!fs.existsSync('md5')) {
-  fs.mkdirSync('md5');
-}
-
 class Mission {
   public missionName: string;
   public islandName: string;
@@ -33,8 +31,9 @@ class Mission {
   constructor(fileName) {
     const missionName = fileName.split('.');
 
-    if (missionName.length !== 2)
+    if (missionName.length !== 2) {
       throw new Error('bad_name: Example - mission_name.island.pbo');
+    }
 
     this.missionName = _.first(missionName);
     this.islandName = _.last(missionName);
@@ -60,7 +59,9 @@ router.post('/verify/:group', (req, res) => {
     throw new Error('no_hash');
   }
 
-  fs.writeFile(`verify/${groupName}`, hash, () => {
+  const filePath = path.resolve(VERIFY_DIR_PATH, groupName);
+
+  fs.writeFile(filePath, hash, () => {
     res.send(null);
   });
 });
@@ -74,8 +75,10 @@ router.get('/verify/:group', (req, res, next) => {
     throw new Error('bad_group_name');
   }
 
+  const filePath = path.resolve(VERIFY_DIR_PATH, groupName);
+
   fs.readFile(
-    `verify/${groupName}`,
+    filePath,
     {
       encoding: 'utf8',
     },
@@ -152,15 +155,13 @@ router.post('/missions', async (req, res, next) => {
         });
       });
 
-      await promisify(fs.writeFile)(
-        `md5/${newMissionName}`,
-        md5(missionBuffer),
-      );
+      const md5FilePath = path.resolve(MD5_DIR_PATH, newMissionName);
 
-      await promisify(fs.writeFile)(
-        `missions/${newMissionName}`,
-        missionBuffer,
-      );
+      await promisify(fs.writeFile)(md5FilePath, md5(missionBuffer));
+
+      const missionFilePath = path.resolve(MISSIONS_DIR_PATH, newMissionName);
+
+      await promisify(fs.writeFile)(missionFilePath, missionBuffer);
     } catch (error) {
       console.error(error);
 
@@ -199,7 +200,9 @@ router.get('/missions', async (req, res, next) => {
 router.get('/missions/:missionName', (req, res, next) => {
   const missionName = req.params.missionName;
 
-  res.sendFile(path.resolve(`missions/${missionName}`));
+  const filePath = path.resolve(MISSIONS_DIR_PATH, missionName);
+
+  res.sendFile(filePath);
 });
 
 app.use(router);

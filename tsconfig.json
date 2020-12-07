@@ -5,6 +5,7 @@
     "resolveJsonModule": true,
     "noImplicitThis": true,
     "noUnusedLocals": false,
-    "sourceMap": true
+    "sourceMap": true,
+    "esModuleInterop": true
   }
 }

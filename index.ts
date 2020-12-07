@@ -1,10 +1,11 @@
-import * as express from 'express';
-import * as fs from 'fs';
-import * as _ from 'lodash';
-import * as md5 from 'md5';
-import * as moment from 'moment';
-import * as path from 'path';
+import express from 'express';
+import fs from 'fs';
+import _ from 'lodash';
+import md5 from 'md5';
+import moment from 'moment';
+import path from 'path';
 import { promisify } from 'util';
+import sanitizeFilename from 'sanitize-filename';
 
 const VERIFY_DIR_PATH = path.resolve('verify');
 const MISSIONS_DIR_PATH = path.resolve('missions');
@@ -59,7 +60,7 @@ router.post('/verify/:group', (req, res) => {
     throw new Error('no_hash');
   }
 
-  const filePath = path.resolve(VERIFY_DIR_PATH, groupName);
+  const filePath = path.resolve(VERIFY_DIR_PATH, sanitizeFilename(groupName));
 
   fs.writeFile(filePath, hash, () => {
     res.send(null);
@@ -75,7 +76,7 @@ router.get('/verify/:group', (req, res, next) => {
     throw new Error('bad_group_name');
   }
 
-  const filePath = path.resolve(VERIFY_DIR_PATH, groupName);
+  const filePath = path.resolve(VERIFY_DIR_PATH, sanitizeFilename(groupName));
 
   fs.readFile(
     filePath,
@@ -155,11 +156,17 @@ router.post('/missions', async (req, res, next) => {
         });
       });
 
-      const md5FilePath = path.resolve(MD5_DIR_PATH, newMissionName);
+      const md5FilePath = path.resolve(
+        MD5_DIR_PATH,
+        sanitizeFilename(newMissionName),
+      );
 
       await promisify(fs.writeFile)(md5FilePath, md5(missionBuffer));
 
-      const missionFilePath = path.resolve(MISSIONS_DIR_PATH, newMissionName);
+      const missionFilePath = path.resolve(
+        MISSIONS_DIR_PATH,
+        sanitizeFilename(newMissionName),
+      );
 
       await promisify(fs.writeFile)(missionFilePath, missionBuffer);
     } catch (error) {
@@ -200,7 +207,10 @@ router.get('/missions', async (req, res, next) => {
 router.get('/missions/:missionName', (req, res, next) => {
   const missionName = req.params.missionName;
 
-  const filePath = path.resolve(MISSIONS_DIR_PATH, missionName);
+  const filePath = path.resolve(
+    MISSIONS_DIR_PATH,
+    sanitizeFilename(missionName),
+  );
 
   res.sendFile(filePath);
 });
